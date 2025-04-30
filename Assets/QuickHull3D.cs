@@ -8,8 +8,45 @@ public class QuickHull3D : MonoBehaviour
     public int pointCount = 100;
     public float pointRange = 5f;
 
+
+    // List to hold the generated points for debugging (should replace with actual input points)
     private List<Vector3> debugPoints = new List<Vector3>();
     private List<Face> currentHull = new List<Face>();
+
+
+    /// <summary>
+    /// Represents a triangular face of the convex hull.
+    /// </summary>
+    public struct Face
+    {
+        public int a, b, c;
+        public Vector3 normal;
+
+        /// <summary>
+        /// Constructs a face from three vertex indices and computes the normal.
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="c"></param>
+        /// <param name="vertices"></param>
+
+        public Face(int a, int b, int c, List<Vector3> vertices)
+        {
+            this.a = a; this.b = b; this.c = c;
+            normal = Vector3.Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]).normalized;
+        }
+
+        /// <summary>
+        /// Checks if a point is above the face defined by the vertices.
+        /// </summary>
+        /// <param name="point"></param>
+        /// <param name="vertices"></param>
+        /// <returns></returns>
+        public bool IsPointAbove(Vector3 point, List<Vector3> vertices)
+        {
+            return Vector3.Dot(normal, point - vertices[a]) > 1e-5f;
+        }
+    }
 
     void Update()
     {
@@ -25,6 +62,13 @@ public class QuickHull3D : MonoBehaviour
         }
     }
 
+
+    /// <summary>
+    /// Generates a list of random points within a specified range.
+    /// </summary>
+    /// <param name="count"></param>
+    /// <param name="range"></param>
+    /// <returns></returns>
     public List<Vector3> GenerateRandomPoints(int count, float range)
     {
         var points = new List<Vector3>();
@@ -38,28 +82,19 @@ public class QuickHull3D : MonoBehaviour
         return points;
     }
 
-    public struct Face
-    {
-        public int a, b, c;
-        public Vector3 normal;
-
-        public Face(int a, int b, int c, List<Vector3> vertices)
-        {
-            this.a = a; this.b = b; this.c = c;
-            normal = Vector3.Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]).normalized;
-        }
-
-        public bool IsPointAbove(Vector3 point, List<Vector3> vertices)
-        {
-            return Vector3.Dot(normal, point - vertices[a]) > 1e-5f;
-        }
-    }
-
+    /// <summary>
+    /// Computes the convex hull of a set of points using the QuickHull algorithm.
+    /// </summary>
+    /// <param name="points"></param>
+    /// <returns></returns>
     public List<Face> ComputeConvexHull(List<Vector3> points)
     {
+
+        /// Check if the input points are valid (at least 4 points)
         List<Face> faces = new List<Face>();
         if (points.Count < 4) return faces;
 
+        // Find the initial tetrahedron 
         int[] initial = FindInitialTetrahedron(points);
         if (initial == null) return faces;
 
@@ -69,6 +104,10 @@ public class QuickHull3D : MonoBehaviour
         faces.Add(new Face(initial[1], initial[3], initial[2], points));
 
         var faceQueue = new Queue<Face>(faces);
+
+        // find all the points that are outside the initial tetrahedron
+        // and outsidePoints dictionary is created in this step,
+        // this is also used as a data structure to hold the points outside the faces throughout the main loop
         var outsidePoints = new Dictionary<Face, List<int>>();
 
         foreach (var pointIndex in System.Linq.Enumerable.Range(0, points.Count))
@@ -84,12 +123,15 @@ public class QuickHull3D : MonoBehaviour
             }
         }
 
+        // main loop to find the convex hull
         while (outsidePoints.Count > 0)
         {
+            // pick a face and find all the points outside it (store indecies in pointIndecies)
             var entry = outsidePoints.First();
             var face = entry.Key;
             var pointIndices = entry.Value;
 
+            // find the point that is furthest from the face (pushes outward the most)
             float maxDist = float.NegativeInfinity;
             int furthest = -1;
             foreach (int pi in pointIndices)
@@ -102,6 +144,7 @@ public class QuickHull3D : MonoBehaviour
                 }
             }
 
+            // find all faces that are visible from the furthest point (visible as point is outside of the face)
             var visibleFaces = new HashSet<Face>();
             foreach (var f in faces)
             {
@@ -109,6 +152,7 @@ public class QuickHull3D : MonoBehaviour
                     visibleFaces.Add(f);
             }
 
+            // find the horizon edges (edges that divide visisble and invisiable faces)
             var horizonEdges = new HashSet<(int, int)>();
             foreach (var vf in visibleFaces)
             {
@@ -117,12 +161,15 @@ public class QuickHull3D : MonoBehaviour
                 AddHorizonEdge(horizonEdges, vf.c, vf.a);
             }
 
+            // remove visible faces and add new faces from the horizon edges
             foreach (var vf in visibleFaces)
                 faces.Remove(vf);
 
             foreach (var edge in horizonEdges)
                 faces.Add(new Face(edge.Item1, edge.Item2, furthest, points));
 
+
+            // update the outsidePoints dictionary
             outsidePoints.Clear();
             foreach (var pointIndex in System.Linq.Enumerable.Range(0, points.Count))
             {
@@ -143,10 +190,23 @@ public class QuickHull3D : MonoBehaviour
         return faces;
     }
 
+    /// <summary>
+    /// Finds the initial tetrahedron from a list of points. 
+    /// Can have various ways to do this, need to ensure that:
+    /// 1. The 4 points must be non-coplanar
+    /// 2. The 4 faces should have outward-facing normals.
+    /// 3. Points are not too close or nearly degenerate (floating point error)
+    /// 4. Not required, but should contain more points inside so that total interaction is reduced.
+    /// </summary>
+    /// <param name="points"></param>
+    /// <returns></returns>
     int[] FindInitialTetrahedron(List<Vector3> points)
     {
+        // piont a is just first point in the list
         int a = 0;
+        // point b is the furthest point from the first
         int b = FindFurthestPoint(points, a);
+        // point c is the point that maximizes the triangle area abc
         int c = -1;
         float maxArea = 0f;
         for (int i = 0; i < points.Count; i++)
@@ -161,6 +221,7 @@ public class QuickHull3D : MonoBehaviour
         }
         if (c == -1) return null;
 
+        // point d is the point that maximizes the volume of tetrahedron abcd
         int d = -1;
         float maxVolume = 0f;
         for (int i = 0; i < points.Count; i++)
@@ -177,6 +238,12 @@ public class QuickHull3D : MonoBehaviour
         return new int[] { a, b, c, d };
     }
 
+    /// <summary>
+    /// Finds the furthest point from a given point in the list.
+    /// </summary>
+    /// <param name="points"></param>
+    /// <param name="from"></param>
+    /// <returns></returns>
     int FindFurthestPoint(List<Vector3> points, int from)
     {
         float maxDist = 0f;
@@ -194,12 +261,23 @@ public class QuickHull3D : MonoBehaviour
         return index;
     }
 
+    /// <summary>
+    /// Adds an edge to the horizon edges set. If the edge already exists, it removes it.
+    /// </summary>
+    /// <param name="set"></param>
+    /// <param name="a"></param>
+    /// <param name="b"></param>
     void AddHorizonEdge(HashSet<(int, int)> set, int a, int b)
     {
         if (!set.Remove((b, a)))
             set.Add((a, b));
     }
 
+    /// <summary>
+    /// Creates a mesh from the list of faces.
+    /// </summary>
+    /// <param name="faces"></param>
+    /// <returns></returns>
     Mesh CreateMesh(List<Face> faces)
     {
         var mesh = new Mesh();
